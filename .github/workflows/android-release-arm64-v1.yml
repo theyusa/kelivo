@@ -1,0 +1,94 @@
+name: Android Release ARM64 v1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: '3.41.2'
+
+jobs:
+  build-release:
+    name: Build Android arm64-v8a Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Inject fallback
+        shell: bash
+        run: |
+          mkdir -p lib/secrets
+          cat > lib/secrets/fallback.dart <<'EOF'
+          const String siliconflowFallbackKey = '${{ secrets.SILICONFLOW_KEY }}';
+          EOF
+
+      - name: Prepare debug keystore for release signing
+        shell: bash
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+          cat > android/key.properties <<'EOF'
+          storeFile=debug.keystore
+          storePassword=android
+          keyAlias=androiddebugkey
+          keyPassword=android
+          EOF
+
+      - name: Read version
+        shell: bash
+        run: |
+          VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build release APK (arm64-v8a only)
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Rename APK
+        shell: bash
+        run: |
+          cd build/app/outputs/flutter-apk
+          mv app-release.apk "Kelivo_android_${VERSION}_arm64-v8a.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-arm64-v8a-release
+          path: build/app/outputs/flutter-apk/Kelivo_android_*_arm64-v8a.apk
+
+      - name: Create v1 release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1
+          name: v1
+          files: build/app/outputs/flutter-apk/Kelivo_android_*_arm64-v8a.apk
